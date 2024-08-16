@@ -1,21 +1,3 @@
-import re
-
-
-def generate_generic_mavlink_send_code(message_type, params):
-    param_list = []
-    for param in params.values():
-        # Check if the parameter is a text string or needs quotes
-        if isinstance(param, str) and not param.isdigit():
-            param_list.append(f'"{param}"')
-        else:
-            param_list.append(f"{param}")
-    param_list_str = ', '.join(param_list)
-    arduino_code = f"""
-    send{message_type}({param_list_str});
-"""
-    return arduino_code
- 
- 
 def generate_arduino_code_from_text_file(input_text_file, output_arduino_file):
     with open(input_text_file, 'r') as f:
         lines = f.readlines()
@@ -49,70 +31,30 @@ void loop() {
  
     for line in lines:
         line = line.strip()
-        message_type = line.split(" ")[0]
-        params = extract_params(line)
- 
-        if message_type == "GPS_RAW_INT":
+        if line.startswith("GPS_RAW_INT"):
+            # Extract values from GPS_RAW_INT message
+            time_usec, fix_type, lat, lon, alt, eph, epv, vel, cog, satellites_visible = extract_gps_raw_int(line)
             arduino_code += f"""
-    sendGPSRawInt({params["time_usec"]}, {params["fix_type"]}, {params["lat"]}, {params["lon"]}, {params["alt"]}, {params["eph"]}, {params["epv"]}, {params["vel"]}, {params["cog"]}, {params["satellites_visible"]});
+    sendGPSRawInt({time_usec}, {fix_type}, {lat}, {lon}, {alt}, {eph}, {epv}, {vel}, {cog}, {satellites_visible});
     delay(100);
 """
-        elif message_type == "HEARTBEAT":
+        elif line.startswith("HEARTBEAT"):
+            # Extract values from HEARTBEAT message
+            type_, autopilot, base_mode, custom_mode, system_status, mavlink_version = extract_heartbeat(line)
             arduino_code += f"""
-    sendHeartbeat({params["type"]}, {params["autopilot"]}, {params["base_mode"]}, {params["custom_mode"]}, {params["system_status"]}, {params["mavlink_version"]});
+    sendHeartbeat({type_}, {autopilot}, {base_mode}, {custom_mode}, {system_status}, {mavlink_version});
     delay(100);
 """
-        else:
-            arduino_code += generate_generic_mavlink_send_code(message_type, params)
-            arduino_code += "    delay(100);\n"
  
     arduino_code += """
     Serial.println("All MAVLink messages sent.");
     delay(5000);
 }
  
-"""
- 
-    arduino_code += generate_send_functions()
- 
-    with open(output_arduino_file, 'w') as f:
-        f.write(arduino_code)
- 
-    print(f"Arduino code has been generated and saved to {output_arduino_file}")
- 
- 
-def extract_params(message):
-    pattern = r"{(.*?)}"
-    matches = re.search(pattern, message)
-    if matches:
-        param_str = matches.group(1)
-        params = {}
-        for param in param_str.split(", "):
-            key, value = param.split(" : ")
-            params[key.strip()] = value.strip()
-        return params
-    return {}
- 
-def generate_generic_mavlink_send_code(message_type, params):
-    param_list = []
-    for param in params.values():
-        # Check if the parameter is a text string or needs quotes
-        if param.replace(".", "").isdigit():
-            param_list.append(param)
-        else:
-            param_list.append(f'"{param}"')
-    param_list_str = ', '.join(param_list)
-    arduino_code = f"""
-    send{message_type}({param_list_str});
-"""
-    return arduino_code
- 
-def generate_send_functions():
-    functions_code = """
 void sendGPSRawInt(uint64_t time_usec, uint8_t fix_type, int32_t lat, int32_t lon, int32_t alt, uint16_t eph, uint16_t epv, uint16_t vel, int16_t cog, uint8_t satellites_visible) {
     mavlink_message_t msg;
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
-    mavlink_msg_gps_raw_int_pack(1, 1, &msg, time_usec, fix_type, lat, lon, alt, eph, epv, vel, cog, satellites_visible);
+    mavlink_msg_gps_raw_int_pack(1, 1, &msg, time_usec, fix_type, lat, lon, alt, eph, epv, vel, cog, satellites_visible,0,0,0,0,0,0);
     uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
     udp.beginPacket(udpAddress, udpPort);
     udp.write(buf, len);
@@ -123,21 +65,144 @@ void sendGPSRawInt(uint64_t time_usec, uint8_t fix_type, int32_t lat, int32_t lo
 void sendHeartbeat(uint8_t type, uint8_t autopilot, uint8_t base_mode, uint32_t custom_mode, uint8_t system_status, uint8_t mavlink_version) {
     mavlink_message_t msg;
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
-    mavlink_msg_heartbeat_pack(1, 1, &msg, type, autopilot, base_mode, custom_mode, system_status, mavlink_version);
+    mavlink_msg_heartbeat_pack(1, 1, &msg, type, autopilot, base_mode, custom_mode, system_status);
     uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
     udp.beginPacket(udpAddress, udpPort);
     udp.write(buf, len);
     udp.endPacket();
     Serial.println("HEARTBEAT message sent");
 }
+
+void sendREQUEST_DATA_STREAM(uint8_t target_system, uint8_t target_component, uint8_t req_stream_id, uint16_t req_message_rate, uint8_t start_stop) {
+    mavlink_message_t msg;
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    mavlink_msg_request_data_stream_pack(1, 1, &msg, target_system, target_component, req_stream_id, req_message_rate, start_stop);
+    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    udp.beginPacket(udpAddress, udpPort);
+    udp.write(buf, len);
+    udp.endPacket();
+    Serial.println("REQUEST_DATA_STREAM message sent");
+}
+
+
+void sendATTITUDE(uint32_t time_boot_ms, float roll, float pitch, float yaw, float rollspeed, float pitchspeed, float yawspeed) {
+    mavlink_message_t msg;
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    mavlink_msg_attitude_pack(1, 1, &msg, time_boot_ms, roll, pitch, yaw, rollspeed, pitchspeed, yawspeed);
+    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    udp.beginPacket(udpAddress, udpPort);
+    udp.write(buf, len);
+    udp.endPacket();
+    Serial.println("ATTITUDE message sent");
+}
+
+
+void sendGLOBAL_POSITION_INT(uint32_t time_boot_ms, int32_t lat, int32_t lon, int32_t alt, int32_t relative_alt, int16_t vx, int16_t vy, int16_t vz, uint16_t hdg) {
+    mavlink_message_t msg;
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    mavlink_msg_global_position_int_pack(1, 1, &msg, time_boot_ms, lat, lon, alt, relative_alt, vx, vy, vz, hdg);
+    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    udp.beginPacket(udpAddress, udpPort);
+    udp.write(buf, len);
+    udp.endPacket();
+    Serial.println("GLOBAL_POSITION_INT message sent");
+}
+
+
+void sendSTATUSTEXT(uint8_t severity, const char *text) {
+    mavlink_message_t msg;
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    mavlink_msg_statustext_pack(1, 1, &msg, severity, text,0,0);
+    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    udp.beginPacket(udpAddress, udpPort);
+    udp.write(buf, len);
+    udp.endPacket();
+    Serial.println("STATUSTEXT message sent");
+}
+
+void sendPARAM_REQUEST_LIST(uint8_t target_system, uint8_t target_component) {
+    mavlink_message_t msg;
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    mavlink_msg_param_request_list_pack(1, 1, &msg, target_system, target_component);
+    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    udp.beginPacket(udpAddress, udpPort);
+    udp.write(buf, len);
+    udp.endPacket();
+    Serial.println("PARAM_REQUEST_LIST message sent");
+}
+
+void sendCOMMAND_LONG(uint8_t target_system, uint8_t target_component, uint16_t command, uint8_t confirmation, float param1, float param2, float param3, float param4, float param5, float param6, float param7) {
+    mavlink_message_t msg;
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    mavlink_msg_command_long_pack(1, 1, &msg, target_system, target_component, command, confirmation, param1, param2, param3, param4, param5, param6, param7);
+    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    udp.beginPacket(udpAddress, udpPort);
+    udp.write(buf, len);
+    udp.endPacket();
+    Serial.println("COMMAND_LONG message sent");
+}
+
+
+
+void sendMISSION_REQUEST(uint8_t target_system, uint8_t target_component, uint16_t seq) {
+    mavlink_message_t msg;
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    mavlink_msg_mission_request_pack(1, 1, &msg, target_system, target_component, seq,0);
+    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    udp.beginPacket(udpAddress, udpPort);
+    udp.write(buf, len);
+    udp.endPacket();
+    Serial.println("MISSION_REQUEST message sent");
+}
  
 // Add more send functions for other message types here
+
+
+
 """
-    return functions_code
  
+    with open(output_arduino_file, 'w') as f:
+        f.write(arduino_code)
+ 
+    print(f"Arduino code has been generated and saved to {output_arduino_file}")
+ 
+ 
+def extract_gps_raw_int(message):
+    parts = message.replace("GPS_RAW_INT {", "").replace("}", "").split(", ")
+    values = {}
+    for part in parts:
+        key, value = part.split(" : ")
+        values[key.strip()] = int(value.strip())
+    return (
+        values["time_usec"],
+        values["fix_type"],
+        values["lat"],
+        values["lon"],
+        values["alt"],
+        values["eph"],
+        values["epv"],
+        values["vel"],
+        values["cog"],
+        values["satellites_visible"]
+    )
+ 
+def extract_heartbeat(message):
+    parts = message.replace("HEARTBEAT {", "").replace("}", "").split(", ")
+    values = {}
+    for part in parts:
+        key, value = part.split(" : ")
+        values[key.strip()] = int(value.strip())
+    return (
+        values["type"],
+        values["autopilot"],
+        values["base_mode"],
+        values["custom_mode"],
+        values["system_status"],
+        values["mavlink_version"]
+    )
  
 # Usage example
-input_text_file = "mavlink_messages.txt"
-output_arduino_file = "mavlink_esp32_code_all_types.ino"
+input_text_file = "test.txt"
+output_arduino_file = "test.ino"
  
 generate_arduino_code_from_text_file(input_text_file, output_arduino_file)
