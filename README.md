@@ -2,7 +2,7 @@ This repository is still under testing. Please let me know if there are any erro
 
 After successfully creating a simulated trip using Mission Planner, you will need to extract the MAVLink messages from the TLOG file.
 
-Convert from TLOG file to Text:
+Convert from TLOG file to Text:<br>
 
 Use tlogconvert.py. Ensure you have installed the pymavlink library. You can install it using pip install pymavlink.
 Specify the log file name; in our case, it's test.log.
